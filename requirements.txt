@@ -1,0 +1,9 @@
+pandas
+numpy
+openpyxl
+xlrd
+python-dotenv
+streamlit
+google-genai
+fpdf2
+pytest

@@ -6,4 +6,6 @@ python-dotenv
 streamlit
 google-genai
 fpdf2
+scikit-learn
+plotly
 pytest

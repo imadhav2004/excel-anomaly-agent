@@ -142,3 +142,49 @@ def test_a_failed_ai_call_is_not_cached(tmp_path, monkeypatch):
     app.run()  # second run: Gemini has recovered
     assert not any("Gemini could not answer" in w.value for w in app.warning)
     assert "AI suggestion" in " ".join(m.value for m in app.markdown)
+
+
+def scan_table(app):
+    # the scan table is the dataframe that has an "Agreement" column
+    for element in app.dataframe:
+        if "Agreement" in element.value.columns:
+            return element.value
+    return None
+
+
+def test_scan_section_lists_the_spike_with_agreement(tmp_path):
+    good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
+    app = run_app()
+    assert not app.exception
+    table = scan_table(app)
+    assert table is not None
+    row = table[(table["Metric"] == "Sales") & (table["Period"] == "Dec 2025")].iloc[0]
+    assert row["Severity"] == "HIGH"
+    assert row["Direction"] == "up"
+    assert row["Agreement"].startswith(("2 of", "3 of", "4 of"))
+
+
+def test_scan_says_which_methods_could_not_run(tmp_path):
+    good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
+    app = run_app()
+    text = " ".join(c.value for c in app.caption)
+    assert "Seasonal" in text and "24 rows" in text
+    assert "Isolation Forest" in text and "20 rows" in text
+
+
+def test_choosing_one_method_changes_the_scan(tmp_path):
+    good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
+    app = run_app()
+    methods_box = [m for m in app.multiselect if m.label == "Methods"][0]
+    methods_box.set_value(["iqr"]).run()
+    assert not app.exception
+    table = scan_table(app)
+    assert set(table["Agreement"]) == {"1 of 1 methods"}
+
+
+def test_scan_with_no_method_chosen_shows_a_warning(tmp_path):
+    good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
+    app = run_app()
+    [m for m in app.multiselect if m.label == "Methods"][0].set_value([]).run()
+    assert not app.exception
+    assert any("at least one detection method" in w.value for w in app.warning)

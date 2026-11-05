@@ -3,12 +3,15 @@ import os
 import tempfile
 from pathlib import Path
 
+import plotly.graph_objects as go
 import streamlit as st
 
 from anomaly_agent.ai_explainer import ai_available, fetch_ai_explanations, get_explanations, short_reason
 from anomaly_agent.data.cleaner import clean_data, fill_gaps, suggest_fixes
 from anomaly_agent.data.profiler import find_date_column, profile_data
 from anomaly_agent.data.reader import list_sheets, read_table
+from anomaly_agent.detection.base import DetectionSettings
+from anomaly_agent.detection.engine import METHODS, group_skipped, run_detection, summarise
 from anomaly_agent.detector import detect_anomalies
 from anomaly_agent.exporter import build_excel_report
 from anomaly_agent.history import get_history, save_analysis
@@ -248,13 +251,118 @@ if not PUBLIC_DEMO and right.button("Save this analysis to history"):
     save_analysis(source_name, period, len(df), anomalies)
     st.success("Saved to history.")
 
+# ---------- Scan every period ----------
+st.subheader("Anomaly scan across all periods")
+st.caption(
+    "The result above checks only the newest period. This scan checks every period "
+    "with several methods, and shows how many methods agree."
+)
+with st.expander("Detection methods and settings"):
+    chosen_methods = st.multiselect(
+        "Methods", list(METHODS), default=list(METHODS), format_func=lambda key: METHODS[key].label
+    )
+    for key in chosen_methods:
+        st.markdown(f"- **{METHODS[key].label}:** {METHODS[key].description}")
+    s1, s2 = st.columns(2)
+    window = s1.slider("Rolling window (periods)", 2, 12, 6)
+    iqr_multiplier = s2.slider("Box-plot width (IQR multiplier)", 1.0, 3.0, 1.5, 0.5)
+    st.caption("The percent and z-score limits come from the sidebar.")
+
+if not chosen_methods:
+    st.warning("Choose at least one detection method.")
+    scan = {"anomalies": [], "skipped": [], "ran": {}}
+else:
+    settings = DetectionSettings(
+        pct_threshold=pct_threshold,
+        z_threshold=z_threshold,
+        iqr_multiplier=iqr_multiplier,
+        window=window,
+    )
+    scan = run_detection(df, date_column, chosen_metrics, chosen_methods, settings)
+summary = summarise(scan)
+
+s_col1, s_col2, s_col3 = st.columns(3)
+s_col1.metric("Flagged periods", len(summary))
+s_col2.metric("Agreed by 2+ methods", sum(1 for r in summary if r["votes"] >= 2))
+s_col3.metric("HIGH in scan", sum(1 for r in summary if r["severity"] == "HIGH"))
+
+
+def percent(value):
+    return "from zero" if value is None else f"{value:+.0%}"
+
+
+if summary:
+    st.dataframe(
+        [
+            {
+                "Period": r["period"].strftime("%b %Y"),
+                "Metric": r["metric"],
+                "Severity": r["severity"],
+                "Direction": r["direction"],
+                "Actual": round(r["actual"], 2),
+                "Expected": round(r["expected"], 2),
+                "Deviation": percent(r["deviation_pct"]),
+                "Agreement": f"{r['votes']} of {r['methods_run']} methods",
+                "Methods": ", ".join(METHODS[m].label for m in r["methods"]),
+            }
+            for r in summary
+        ],
+        hide_index=True,
+    )
+    with st.expander("Why was each one flagged? (every method separately)"):
+        st.dataframe(
+            [
+                {
+                    "Period": a["period"].strftime("%b %Y"),
+                    "Metric": a["metric"],
+                    "Method": METHODS[a["method"]].label,
+                    "Severity": a["severity"],
+                    "Score": round(a["score"], 2),
+                    "Explanation": a["explanation"],
+                }
+                for a in scan["anomalies"]
+            ],
+            hide_index=True,
+        )
+        st.caption("Score 1.0 means just over the limit. 2.0 or more is HIGH.")
+elif chosen_methods:
+    st.success("No anomalies found in any period with these methods.")
+
+for item in group_skipped(scan):
+    st.caption(
+        f"**{METHODS[item['method']].label}** was not run: {item['reason']} "
+        f"({', '.join(item['metrics'])})."
+    )
+
 # ---------- Charts ----------
 st.subheader("Trend")
 chosen = st.selectbox("Choose a metric", chosen_metrics)
 flagged = [a["metric"] for a in anomalies]
 if chosen in flagged:
     st.warning(f"{chosen} is flagged in the latest period.")
-st.line_chart(df.set_index(date_column)[chosen])
+
+figure = go.Figure()
+figure.add_trace(
+    go.Scatter(x=df[date_column], y=df[chosen], mode="lines+markers", name=chosen)
+)
+points = [r for r in summary if r["metric"] == chosen]
+if points:
+    figure.add_trace(
+        go.Scatter(
+            x=[p["period"] for p in points],
+            y=[p["actual"] for p in points],
+            mode="markers",
+            name="Anomaly",
+            marker=dict(size=14, symbol="circle-open", line=dict(width=3, color="#e53935")),
+            text=[
+                f"{p['severity']}: {p['votes']} of {p['methods_run']} methods<br>{p['explanation']}"
+                for p in points
+            ],
+            hoverinfo="text",
+        )
+    )
+figure.update_layout(height=380, margin=dict(l=10, r=10, t=10, b=10), hovermode="closest")
+st.plotly_chart(figure, width="stretch")
 
 # ---------- Raw data ----------
 with st.expander("Show the data"):

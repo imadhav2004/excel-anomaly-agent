@@ -1,4 +1,5 @@
 # Excel Anomaly Agent
+**Live demo:** https://excelanomalyagent.streamlit.app/
 
 Reads an Excel sheet, flags metrics that jumped or dropped unusually, explains why it matters, and emails an alert **only when something is wrong**.
 

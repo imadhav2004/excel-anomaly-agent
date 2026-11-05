@@ -97,3 +97,53 @@ def test_email_marks_ai_text_and_says_it_is_not_fact():
 def test_email_without_ai_has_no_ai_label():
     _, body = build_email([make_anomaly()], "Oct 2026")
     assert "AI suggestion" not in body
+
+
+class BusyError(Exception):
+    code = 503
+
+
+def test_a_busy_google_is_tried_again_and_then_works(monkeypatch):
+    calls = []
+
+    def flaky(prompt):
+        calls.append(1)
+        if len(calls) < 3:
+            raise BusyError("high demand")
+        return '{"Revenue": "A big order may have landed."}'
+
+    monkeypatch.setattr(ai_explainer, "ask_gemini", flaky)
+    texts = ai_explainer.fetch_ai_explanations([make_anomaly()], "Oct 2026", wait=0)
+    assert texts == {"Revenue": "A big order may have landed."}
+    assert len(calls) == 3
+
+
+def test_it_gives_up_after_three_tries(monkeypatch):
+    calls = []
+
+    def always_busy(prompt):
+        calls.append(1)
+        raise BusyError("high demand")
+
+    monkeypatch.setattr(ai_explainer, "ask_gemini", always_busy)
+    with pytest.raises(BusyError):
+        ai_explainer.fetch_ai_explanations([make_anomaly()], "Oct 2026", wait=0)
+    assert len(calls) == 3
+
+
+def test_other_errors_are_not_retried(monkeypatch):
+    calls = []
+
+    def bad_key(prompt):
+        calls.append(1)
+        raise PermissionError("bad key")
+
+    monkeypatch.setattr(ai_explainer, "ask_gemini", bad_key)
+    with pytest.raises(PermissionError):
+        ai_explainer.fetch_ai_explanations([make_anomaly()], "Oct 2026", wait=0)
+    assert len(calls) == 1
+
+
+def test_short_reason_is_readable():
+    assert "busy" in ai_explainer.short_reason(BusyError())
+    assert ai_explainer.short_reason(TimeoutError()) == "TimeoutError"

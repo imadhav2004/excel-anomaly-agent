@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import time
 
 from dotenv import load_dotenv
 
@@ -12,6 +13,8 @@ logging.getLogger("google_genai").setLevel(logging.WARNING)  # hide the library'
 
 DEFAULT_MODEL = "gemini-3.5-flash-lite"
 TIMEOUT_MS = 20_000  # give up after 20 seconds so the app never hangs
+BUSY_CODES = (429, 500, 503, 504)  # "too many requests" or "Google is busy": worth trying again
+MAX_TRIES = 3
 
 
 def ai_available():
@@ -71,6 +74,36 @@ def parse_explanations(reply):
     return {str(k): v.strip() for k, v in data.items() if isinstance(v, str) and v.strip()}
 
 
+def fetch_ai_explanations(anomalies, period, wait=2):
+    """Ask Gemini and return {metric: text}. Raises an error if it cannot.
+
+    If Google says it is busy (503) or we sent too many requests (429), wait a
+    little and try again, up to MAX_TRIES times. Other errors are not retried.
+    """
+    prompt = build_prompt(anomalies, period)
+    for attempt in range(1, MAX_TRIES + 1):
+        try:
+            return parse_explanations(ask_gemini(prompt))
+        except Exception as error:
+            busy = getattr(error, "code", None) in BUSY_CODES
+            if not busy or attempt == MAX_TRIES:
+                raise
+            logger.info("Gemini is busy (attempt %s of %s). Trying again.", attempt, MAX_TRIES)
+            time.sleep(wait * attempt)
+
+
+def short_reason(error):
+    """A short, readable reason to show on the page (never contains the key)."""
+    code = getattr(error, "code", None)
+    if code == 503:
+        return "Google says the model is busy (503)"
+    if code == 429:
+        return "request limit reached (429)"
+    if code:
+        return f"error {code}"
+    return type(error).__name__
+
+
 def get_explanations(anomalies, period, use_ai=True):
     """Return {metric: {"text": ..., "source": "AI" or "rules"}}. Never fails."""
     result = {
@@ -84,8 +117,7 @@ def get_explanations(anomalies, period, use_ai=True):
         return result
 
     try:
-        reply = ask_gemini(build_prompt(anomalies, period))
-        ai_texts = parse_explanations(reply)
+        ai_texts = fetch_ai_explanations(anomalies, period)
     except Exception as error:  # any failure falls back to the built-in sentences
         logger.warning("AI explanation failed (%s). Using built-in explanations.", error)
         return result

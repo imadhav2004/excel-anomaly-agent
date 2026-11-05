@@ -20,6 +20,22 @@ CONTEXT = {
         "up": "Website traffic surged. Check where the visitors came from.",
         "down": "Website traffic fell. Check for site problems or ended campaigns.",
     },
+    "Sales": {
+        "up": "Sales rose sharply. Check for a big order, a price change or a promotion.",
+        "down": "Sales fell sharply. Check for lost customers, stock problems or a tracking error.",
+    },
+    "Customers": {
+        "up": "The number of customers jumped. Check whether a campaign or a data import caused it.",
+        "down": "The number of customers dropped. Check for lost accounts or missing data.",
+    },
+    "Refunds": {
+        "up": "Refunds rose sharply. Check product quality, delivery problems or a billing mistake.",
+        "down": "Refunds fell sharply. This is usually good, but confirm the data is complete.",
+    },
+    "Marketing": {
+        "up": "Marketing cost jumped. Check that the extra spend is bringing results.",
+        "down": "Marketing cost dropped. Check whether campaigns stopped by mistake.",
+    },
 }
 
 GENERIC = {

@@ -33,3 +33,13 @@ def test_email_says_alerts_are_not_confirmed():
 def test_from_zero_wording():
     _, body = build_email([make_anomaly(pct_change=None)], "Oct 2026")
     assert "went up from zero" in body
+
+
+def test_sales_and_refunds_have_their_own_notes():
+    _, body = build_email(
+        [make_anomaly(metric="Sales", direction="down"), make_anomaly(metric="Refunds")],
+        "Oct 2026",
+    )
+    assert "Sales fell sharply" in body
+    assert "Refunds rose sharply" in body
+    assert GENERIC["down"] not in body

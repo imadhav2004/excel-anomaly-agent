@@ -188,3 +188,30 @@ def test_scan_with_no_method_chosen_shows_a_warning(tmp_path):
     [m for m in app.multiselect if m.label == "Methods"][0].set_value([]).run()
     assert not app.exception
     assert any("at least one detection method" in w.value for w in app.warning)
+
+
+def test_forecast_section_shows_model_accuracy_and_table(tmp_path):
+    good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
+    app = run_app()
+    assert not app.exception
+    labels = [m.label for m in app.metric]
+    assert "Average error (MAPE)" in labels and "Simple guess error" in labels
+    assert [s.value for s in app.slider if s.label == "How many periods ahead"] == [6]
+    forecast_tables = [d for d in app.dataframe if "Forecast" in d.value.columns]
+    assert forecast_tables and len(forecast_tables[0].value) == 6
+
+
+def test_forecast_horizon_slider_changes_the_table(tmp_path):
+    good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
+    app = run_app()
+    [s for s in app.slider if s.label == "How many periods ahead"][0].set_value(3).run()
+    assert not app.exception
+    forecast_tables = [d for d in app.dataframe if "Forecast" in d.value.columns]
+    assert len(forecast_tables[0].value) == 3
+
+
+def test_forecast_says_why_when_the_file_is_too_short(tmp_path):
+    good_table().head(6).to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
+    app = run_app()
+    assert not app.exception
+    assert any("No forecast for" in i.value and "at least" in i.value for i in app.info)

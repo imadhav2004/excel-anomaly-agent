@@ -3,6 +3,7 @@ import os
 import tempfile
 from pathlib import Path
 
+import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
@@ -14,6 +15,7 @@ from anomaly_agent.detection.base import DetectionSettings
 from anomaly_agent.detection.engine import METHODS, group_skipped, run_detection, summarise
 from anomaly_agent.detector import detect_anomalies
 from anomaly_agent.exporter import build_excel_report
+from anomaly_agent.forecasting import MAX_HORIZON, MIN_ROWS, ForecastError, forecast_metric
 from anomaly_agent.history import get_history, save_analysis
 from anomaly_agent.loader import prepare_dataframe
 from anomaly_agent.pdf_report import build_pdf_report
@@ -363,6 +365,98 @@ if points:
     )
 figure.update_layout(height=380, margin=dict(l=10, r=10, t=10, b=10), hovermode="closest")
 st.plotly_chart(figure, width="stretch")
+
+# ---------- Forecast ----------
+st.subheader("Forecast")
+st.caption(
+    "Predicts the next periods of one metric with a Holt-Winters style model. The shaded band is the "
+    "95% range of likely values. The accuracy check hides the newest periods, forecasts them and "
+    "compares with what really happened."
+)
+
+
+@st.cache_data(show_spinner="Fitting the forecast model...")
+def cached_forecast(table, date_name, metric, horizon):
+    return forecast_metric(table, date_name, metric, horizon)
+
+
+f1, f2 = st.columns(2)
+forecast_metric_name = f1.selectbox("Metric to forecast", chosen_metrics, key="forecast_metric")
+horizon = f2.slider("How many periods ahead", 1, min(MAX_HORIZON, 12), 6, key="forecast_horizon")
+
+try:
+    fc = cached_forecast(df, date_column, forecast_metric_name, horizon)
+except ForecastError as error:
+    fc = None
+    st.info(f"No forecast for {forecast_metric_name}: {error}")
+
+if fc is not None:
+    test = fc["test"]
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Average error (MAPE)", "n/a" if test["mape"] is None else f"{test['mape']:.1%}")
+    m2.metric("Simple guess error", "n/a" if test["naive_mape"] is None else f"{test['naive_mape']:.1%}")
+    m3.metric("Hidden values inside band", f"{test['inside_band']:.0%}")
+    st.caption(f"Model chosen automatically: {fc['model']}.")
+    {"good": st.success, "fair": st.info, "poor": st.warning}[fc["grade"]](fc["verdict"])
+    if fc["gaps_filled"]:
+        st.caption(f"{fc['gaps_filled']} empty period(s) were filled by a straight line before forecasting.")
+
+    history = fc["history"]
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=history.index, y=history.values, mode="lines", name="Actual"))
+    fig.add_trace(
+        go.Scatter(
+            x=fc["dates"] + fc["dates"][::-1],
+            y=list(fc["upper"]) + list(fc["lower"][::-1]),
+            mode="lines",
+            fill="toself",
+            fillcolor="rgba(255, 143, 0, 0.18)",
+            line=dict(width=0),
+            hoverinfo="skip",
+            name="95% band",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=[history.index[-1]] + fc["dates"],
+            y=[history.values[-1]] + list(fc["forecast"]),
+            mode="lines+markers",
+            name="Forecast",
+            line=dict(dash="dash", color="#ff8f00"),
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=test["dates"],
+            y=test["predicted"],
+            mode="lines+markers",
+            name="Accuracy check (hidden periods)",
+            line=dict(dash="dot", color="#8e24aa"),
+        )
+    )
+    fig.update_layout(height=400, margin=dict(l=10, r=10, t=10, b=10), hovermode="x unified")
+    st.plotly_chart(fig, width="stretch")
+
+    forecast_table = [
+        {
+            "Period": d.strftime("%b %Y"),
+            "Forecast": round(float(v), 2),
+            "Lower (95%)": round(float(lo), 2),
+            "Upper (95%)": round(float(hi), 2),
+        }
+        for d, v, lo, hi in zip(fc["dates"], fc["forecast"], fc["lower"], fc["upper"])
+    ]
+    st.dataframe(forecast_table, hide_index=True)
+    st.download_button(
+        "Download forecast (CSV)",
+        pd.DataFrame(forecast_table).to_csv(index=False).encode("utf-8"),
+        file_name=f"forecast_{forecast_metric_name}.csv",
+        mime="text/csv",
+    )
+    st.caption(
+        f"Needs at least {MIN_ROWS} evenly spaced rows. A yearly pattern is used only when the file holds "
+        "two or more full years. A forecast assumes the future behaves like the past."
+    )
 
 # ---------- Raw data ----------
 with st.expander("Show the data"):

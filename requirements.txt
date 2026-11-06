@@ -8,4 +8,5 @@ google-genai
 fpdf2
 scikit-learn
 plotly
+statsmodels
 pytest

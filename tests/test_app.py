@@ -39,15 +39,18 @@ def good_table():
     )
 
 
-def run_app():
-    app = AppTest.from_file(APP_FILE, default_timeout=30)
+def run_app(page=None):
+    """Run the app. `page` is a file name in views/, for example "anomalies"; the default page is Overview."""
+    app = AppTest.from_file(APP_FILE, default_timeout=60)
     app.run()
+    if page:
+        app.switch_page(f"views/{page}.py").run()
     return app
 
 
 def test_date_column_is_found_automatically(tmp_path):
     good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
-    app = run_app()
+    app = run_app("anomalies")
     assert not app.exception
     date_box = [s for s in app.sidebar.selectbox if s.label == "Date column"][0]
     assert date_box.value == "When"
@@ -60,17 +63,19 @@ def test_messy_file_is_cleaned_and_explained(tmp_path):
     df.loc[3, "Refunds"] = "unknown"
     df = pd.concat([df, df.iloc[[2]]], ignore_index=True)  # one duplicate row
     df.to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
-    app = run_app()
+    app = run_app("data_quality")
     assert not app.exception
     text = " ".join(m.value for m in app.markdown)
     assert "duplicate" in text
     assert "not numbers" in text
-    assert [m.value for m in app.metric if m.label == "Rows analysed"] == ["12"]
+    assert [m.value for m in app.metric if m.label == "Rows in file"] == ["13"]
+    overview = run_app()
+    assert [m.value for m in overview.metric if m.label == "Rows analysed"] == ["12"]
 
 
 def test_choosing_fewer_metrics_changes_the_analysis(tmp_path):
     good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
-    app = run_app()
+    app = run_app("anomalies")
     app.sidebar.multiselect[0].set_value(["Refunds"]).run()
     assert not app.exception
     assert [m.value for m in app.metric if m.label == "Anomalies found"] == ["0"]
@@ -86,7 +91,7 @@ def test_a_file_with_no_numbers_shows_a_friendly_error(tmp_path):
 
 def test_public_demo_hides_history_and_ai(tmp_path):
     good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
-    app = run_app()
+    app = run_app("reports")
     assert not [c for c in app.sidebar.checkbox if "AI" in c.label]
     assert not [h for h in app.subheader if h.value == "History"]
 
@@ -106,7 +111,7 @@ def switch_ai_on(monkeypatch, ask):
 def test_ai_text_is_labelled_on_the_page(tmp_path, monkeypatch):
     switch_ai_on(monkeypatch, lambda prompt: '{"Sales": "A large order may have landed."}')
     good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
-    app = run_app()
+    app = run_app("anomalies")
     assert not app.exception
     text = " ".join(m.value for m in app.markdown)
     assert "Sales** (AI suggestion): A large order may have landed." in text
@@ -119,7 +124,7 @@ def test_a_busy_gemini_shows_a_reason_and_builtin_notes(tmp_path, monkeypatch):
 
     switch_ai_on(monkeypatch, busy)
     good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
-    app = run_app()
+    app = run_app("anomalies")
     assert not app.exception
     assert any("Gemini could not answer" in w.value for w in app.warning)
     assert any("busy" in w.value for w in app.warning)
@@ -137,7 +142,7 @@ def test_a_failed_ai_call_is_not_cached(tmp_path, monkeypatch):
 
     switch_ai_on(monkeypatch, recovers_later)
     good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
-    app = run_app()
+    app = run_app("anomalies")
     assert any("Gemini could not answer" in w.value for w in app.warning)  # first run: busy
     app.run()  # second run: Gemini has recovered
     assert not any("Gemini could not answer" in w.value for w in app.warning)
@@ -154,7 +159,7 @@ def scan_table(app):
 
 def test_scan_section_lists_the_spike_with_agreement(tmp_path):
     good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
-    app = run_app()
+    app = run_app("anomalies")
     assert not app.exception
     table = scan_table(app)
     assert table is not None
@@ -166,7 +171,7 @@ def test_scan_section_lists_the_spike_with_agreement(tmp_path):
 
 def test_scan_says_which_methods_could_not_run(tmp_path):
     good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
-    app = run_app()
+    app = run_app("anomalies")
     text = " ".join(c.value for c in app.caption)
     assert "Seasonal" in text and "24 rows" in text
     assert "Isolation Forest" in text and "20 rows" in text
@@ -174,8 +179,8 @@ def test_scan_says_which_methods_could_not_run(tmp_path):
 
 def test_choosing_one_method_changes_the_scan(tmp_path):
     good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
-    app = run_app()
-    methods_box = [m for m in app.multiselect if m.label == "Methods"][0]
+    app = run_app("anomalies")
+    methods_box = [m for m in app.sidebar.multiselect if m.label == "Methods"][0]
     methods_box.set_value(["iqr"]).run()
     assert not app.exception
     table = scan_table(app)
@@ -184,15 +189,15 @@ def test_choosing_one_method_changes_the_scan(tmp_path):
 
 def test_scan_with_no_method_chosen_shows_a_warning(tmp_path):
     good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
-    app = run_app()
-    [m for m in app.multiselect if m.label == "Methods"][0].set_value([]).run()
+    app = run_app("anomalies")
+    [m for m in app.sidebar.multiselect if m.label == "Methods"][0].set_value([]).run()
     assert not app.exception
     assert any("at least one detection method" in w.value for w in app.warning)
 
 
 def test_forecast_section_shows_model_accuracy_and_table(tmp_path):
     good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
-    app = run_app()
+    app = run_app("forecast")
     assert not app.exception
     labels = [m.label for m in app.metric]
     assert "Average error (MAPE)" in labels and "Simple guess error" in labels
@@ -203,7 +208,7 @@ def test_forecast_section_shows_model_accuracy_and_table(tmp_path):
 
 def test_forecast_horizon_slider_changes_the_table(tmp_path):
     good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
-    app = run_app()
+    app = run_app("forecast")
     [s for s in app.slider if s.label == "How many periods ahead"][0].set_value(3).run()
     assert not app.exception
     forecast_tables = [d for d in app.dataframe if "Forecast" in d.value.columns]
@@ -212,6 +217,105 @@ def test_forecast_horizon_slider_changes_the_table(tmp_path):
 
 def test_forecast_says_why_when_the_file_is_too_short(tmp_path):
     good_table().head(6).to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
-    app = run_app()
+    app = run_app("forecast")
     assert not app.exception
     assert any("No forecast for" in i.value and "at least" in i.value for i in app.info)
+
+
+# ---------- Pages, filters and the new dashboard parts ----------
+
+
+@pytest.mark.parametrize("page", ["overview", "anomalies", "forecast", "data_quality", "reports"])
+def test_every_page_opens_without_an_error(tmp_path, page):
+    good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
+    app = run_app(page)
+    assert not app.exception
+    assert len(app.title) == 1
+
+
+def test_overview_has_one_card_per_metric_and_marks_the_flagged_one(tmp_path):
+    good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
+    app = run_app()
+    labels = [m.label for m in app.metric]
+    assert "Sales  \u26a0" in labels  # the spike in the newest month
+    assert "Refunds" in labels
+    latest_card = [m for m in app.metric if m.label.startswith("Sales")][0]
+    assert latest_card.value == "1,500"
+    assert "+48.5% vs previous period" in latest_card.delta
+
+
+def test_overview_lists_what_needs_attention(tmp_path):
+    good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
+    app = run_app()
+    tables = [d.value for d in app.dataframe if "Agreement" in d.value.columns]
+    assert tables and tables[0].iloc[0]["Metric"] == "Sales"
+    assert tables[0].iloc[0]["Severity"] == "HIGH"
+
+
+def test_date_range_filter_limits_every_page(tmp_path):
+    good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
+    app = run_app()
+    slider = [s for s in app.sidebar.slider if s.label == "Date range"][0]
+    start, end = slider.value
+    assert len([m for m in app.metric if m.label == "Rows analysed"]) == 1
+    slider.set_value((pd.Timestamp("2025-04-01").to_pydatetime(), end)).run()
+    assert not app.exception
+    assert [m.value for m in app.metric if m.label == "Rows analysed"] == ["9"]
+
+
+def test_a_date_range_with_one_row_asks_for_a_wider_range(tmp_path):
+    good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
+    app = run_app()
+    slider = [s for s in app.sidebar.slider if s.label == "Date range"][0]
+    _, end = slider.value
+    slider.set_value((end, end)).run()
+    assert not app.exception
+    assert any("fewer than 2 rows" in w.value for w in app.warning)
+
+
+def test_severity_filter_changes_the_scan_table(tmp_path):
+    good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
+    app = run_app("anomalies")
+    all_rows = scan_table(app)
+    assert "HIGH" in set(all_rows["Severity"])
+    box = [m for m in app.multiselect if m.label == "Show severity"][0]
+    box.set_value(["LOW"]).run()
+    assert not app.exception
+    table = scan_table(app)  # None when no LOW row exists, which is also correct
+    assert table is None or "HIGH" not in set(table["Severity"])
+
+
+def test_agreement_slider_hides_rows_with_fewer_methods(tmp_path):
+    good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
+    app = run_app("anomalies")
+    slider = [s for s in app.slider if s.label == "At least this many methods agree"][0]
+    slider.set_value(2).run()
+    assert not app.exception
+    table = scan_table(app)
+    assert table is not None
+    assert all(int(a.split(" of ")[0]) >= 2 for a in table["Agreement"])
+
+
+def test_data_quality_page_shows_counts_and_column_types(tmp_path):
+    good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
+    app = run_app("data_quality")
+    labels = {m.label: m.value for m in app.metric}
+    assert labels["Rows in file"] == "12"
+    assert labels["Duplicate rows"] == "0"
+    assert any("Column" in d.value.columns and "Type" in d.value.columns for d in app.dataframe)
+
+
+def test_reports_page_offers_the_three_downloads(tmp_path):
+    good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
+    app = run_app("reports")
+    assert not app.exception
+    downloads = [e for e in app.get("download_button")]
+    assert len(downloads) == 3
+
+
+def test_history_is_shown_on_the_reports_page_when_not_public(tmp_path, monkeypatch):
+    monkeypatch.setenv("PUBLIC_DEMO", "false")
+    good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
+    app = run_app("reports")
+    assert not app.exception
+    assert [h for h in app.subheader if h.value == "History"]

@@ -1,2 +1,20 @@
 [server]
 maxUploadSize = 10
+
+# Two themes. The page follows the computer's light/dark setting, and the user can switch in
+# the top-right menu: three dots, then Settings, then Theme.
+[theme]
+baseRadius = "0.75rem"
+font = "sans serif"
+
+[theme.light]
+primaryColor = "#2F5BEA"
+backgroundColor = "#F6F7FB"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#1B2133"
+
+[theme.dark]
+primaryColor = "#6C9CFF"
+backgroundColor = "#0E1220"
+secondaryBackgroundColor = "#171C2E"
+textColor = "#E7EAF3"

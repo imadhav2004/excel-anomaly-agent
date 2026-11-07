@@ -3,4 +3,8 @@ __pycache__/
 .pytest_cache/
 .env
 data/history.db
+
+# databases: they hold user accounts (password hashes) and saved analyses
 data/*.db
+data/*.sqlite
+*.db-journal

@@ -19,6 +19,7 @@ from anomaly_agent.detection.engine import METHODS, summarise
 from anomaly_agent.detector import detect_anomalies
 from anomaly_agent.loader import prepare_dataframe
 from anomaly_agent.ui.analysis import cached_scan
+from anomaly_agent.ui.auth_ui import current_user
 from anomaly_agent.ui.filters import filter_dates
 from anomaly_agent.validator import DataError, check_file
 
@@ -34,7 +35,7 @@ def is_public_demo():
 def load_secrets():
     # On Streamlit Community Cloud, settings come from "Secrets". Copy them into the environment
     # so the rest of the code can keep using os.getenv.
-    for name in ("GEMINI_API_KEY", "GEMINI_MODEL", "PUBLIC_DEMO"):
+    for name in ("GEMINI_API_KEY", "GEMINI_MODEL", "PUBLIC_DEMO", "DATABASE_URL"):
         try:
             if name in st.secrets:
                 os.environ.setdefault(name, str(st.secrets[name]))
@@ -185,6 +186,7 @@ def build_context():
 
     st.session_state[CONTEXT_KEY] = {
         "public_demo": public_demo,
+        "user": current_user(),
         "use_ai": use_ai,
         "df": df,
         "full_rows": full_rows,

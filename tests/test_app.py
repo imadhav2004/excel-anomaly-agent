@@ -14,6 +14,8 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 from anomaly_agent import ai_explainer
+from anomaly_agent.auth import register_user
+from anomaly_agent.db.database import session_scope
 
 APP_FILE = str(Path(__file__).resolve().parent.parent / "app.py")
 
@@ -39,9 +41,21 @@ def good_table():
     )
 
 
-def run_app(page=None):
-    """Run the app. `page` is a file name in views/, for example "anomalies"; the default page is Overview."""
+def create_user(email="asha@example.com", name="Asha", password="Sup3rSecret1"):
+    """A real user in this test's own database."""
+    with session_scope() as session:
+        return register_user(session, name, email, password)
+
+
+def run_app(page=None, user=None):
+    """Run the app. `page` is a file name in views/, for example "anomalies"; the default page is Overview.
+
+    `user` is a logged-in user (from create_user). Without one, the app behaves like the public demo
+    when PUBLIC_DEMO is true, and shows the login screen when it is false.
+    """
     app = AppTest.from_file(APP_FILE, default_timeout=60)
+    if user is not None:
+        app.session_state["auth_user"] = user
     app.run()
     if page:
         app.switch_page(f"views/{page}.py").run()
@@ -111,7 +125,7 @@ def switch_ai_on(monkeypatch, ask):
 def test_ai_text_is_labelled_on_the_page(tmp_path, monkeypatch):
     switch_ai_on(monkeypatch, lambda prompt: '{"Sales": "A large order may have landed."}')
     good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
-    app = run_app("anomalies")
+    app = run_app("anomalies", user=create_user())
     assert not app.exception
     text = " ".join(m.value for m in app.markdown)
     assert "Sales** (AI suggestion): A large order may have landed." in text
@@ -124,7 +138,7 @@ def test_a_busy_gemini_shows_a_reason_and_builtin_notes(tmp_path, monkeypatch):
 
     switch_ai_on(monkeypatch, busy)
     good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
-    app = run_app("anomalies")
+    app = run_app("anomalies", user=create_user())
     assert not app.exception
     assert any("Gemini could not answer" in w.value for w in app.warning)
     assert any("busy" in w.value for w in app.warning)
@@ -142,7 +156,7 @@ def test_a_failed_ai_call_is_not_cached(tmp_path, monkeypatch):
 
     switch_ai_on(monkeypatch, recovers_later)
     good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
-    app = run_app("anomalies")
+    app = run_app("anomalies", user=create_user())
     assert any("Gemini could not answer" in w.value for w in app.warning)  # first run: busy
     app.run()  # second run: Gemini has recovered
     assert not any("Gemini could not answer" in w.value for w in app.warning)
@@ -316,6 +330,129 @@ def test_reports_page_offers_the_three_downloads(tmp_path):
 def test_history_is_shown_on_the_reports_page_when_not_public(tmp_path, monkeypatch):
     monkeypatch.setenv("PUBLIC_DEMO", "false")
     good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
-    app = run_app("reports")
+    app = run_app("reports", user=create_user())
     assert not app.exception
     assert [h for h in app.subheader if h.value == "History"]
+
+
+# ---------- Login, accounts and per-user history ----------
+
+
+def private_app(monkeypatch, tmp_path, page=None, user=None):
+    monkeypatch.setenv("PUBLIC_DEMO", "false")
+    good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
+    return run_app(page, user=user)
+
+
+def fill(app, **values):
+    for key, value in values.items():
+        app.text_input(key=key).set_value(value)
+    return app
+
+
+def test_without_a_login_only_the_login_screen_is_shown(tmp_path, monkeypatch):
+    app = private_app(monkeypatch, tmp_path)
+    assert not app.exception
+    assert [t.value for t in app.title] == ["Excel Anomaly Agent"]
+    assert not app.metric  # no data page was drawn
+    assert app.text_input(key="login_email") is not None
+
+
+def test_the_public_demo_needs_no_login(tmp_path):
+    good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
+    app = run_app()
+    assert [t.value for t in app.title] == ["Overview"]
+    assert not [b for b in app.sidebar.button if b.key == "logout"]
+    assert not any(p for p in app.sidebar.markdown if "Signed in" in p.value)
+
+
+def test_registering_logs_the_person_in(tmp_path, monkeypatch):
+    app = private_app(monkeypatch, tmp_path)
+    fill(app, register_name="Asha", register_email="Asha@Example.com",
+         register_password="Sup3rSecret1", register_again="Sup3rSecret1")
+    app.button(key="register_submit").click().run()
+    assert not app.exception
+    assert [t.value for t in app.title] == ["Overview"]
+    assert app.session_state["auth_user"]["email"] == "asha@example.com"
+    assert any("asha@example.com" in t.value for t in app.sidebar.text)
+
+
+def test_registering_with_different_passwords_shows_an_error(tmp_path, monkeypatch):
+    app = private_app(monkeypatch, tmp_path)
+    fill(app, register_name="Asha", register_email="a@example.com",
+         register_password="Sup3rSecret1", register_again="Different123")
+    app.button(key="register_submit").click().run()
+    assert any("not the same" in e.value for e in app.error)
+    assert "auth_user" not in app.session_state
+
+
+def test_logging_in_with_the_right_and_the_wrong_password(tmp_path, monkeypatch):
+    create_user()
+    app = private_app(monkeypatch, tmp_path)
+    fill(app, login_email="asha@example.com", login_password="wrong-Pass1")
+    app.button(key="login_submit").click().run()
+    assert any("Wrong email or password" in e.value for e in app.error)
+    fill(app, login_email="asha@example.com", login_password="Sup3rSecret1")
+    app.button(key="login_submit").click().run()
+    assert not app.exception
+    assert app.session_state["auth_user"]["name"] == "Asha"
+
+
+def test_log_out_returns_to_the_login_screen(tmp_path, monkeypatch):
+    app = private_app(monkeypatch, tmp_path, user=create_user())
+    assert [t.value for t in app.title] == ["Overview"]
+    app.sidebar.button(key="logout").click().run()
+    assert not app.exception
+    assert "auth_user" not in app.session_state
+    assert app.text_input(key="login_email") is not None
+
+
+def test_saved_history_is_private_to_each_user(tmp_path, monkeypatch):
+    monkeypatch.setenv("PUBLIC_DEMO", "false")
+    good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
+    asha, ravi = create_user("asha@example.com", "Asha"), create_user("ravi@example.com", "Ravi")
+    app = run_app("reports", user=asha)
+    [b for b in app.button if b.label == "Save this analysis to history"][0].click().run()
+    assert not app.exception
+    assert any("Saved to history" in s.value for s in app.success)
+    assert any("Source" in d.value.columns and len(d.value) == 1 for d in app.dataframe)
+    other = run_app("reports", user=ravi)  # Ravi sees nothing of Asha's
+    assert not any("Source" in d.value.columns for d in other.dataframe)
+    assert any("No saved analyses yet" in c.value for c in other.caption)
+
+
+def test_account_page_changes_the_password(tmp_path, monkeypatch):
+    app = private_app(monkeypatch, tmp_path, page="account", user=create_user())
+    assert not app.exception
+    fill(app, cp_current="Sup3rSecret1", cp_new="N3wSecretPass", cp_again="N3wSecretPass")
+    app.button(key="cp_submit").click().run()
+    assert any("Password changed" in s.value for s in app.success)
+    with session_scope() as session:
+        from anomaly_agent.auth import login
+        assert login(session, "asha@example.com", "N3wSecretPass")["name"] == "Asha"
+
+
+def test_account_page_rejects_a_wrong_current_password(tmp_path, monkeypatch):
+    app = private_app(monkeypatch, tmp_path, page="account", user=create_user())
+    fill(app, cp_current="not-the-one-1", cp_new="N3wSecretPass", cp_again="N3wSecretPass")
+    app.button(key="cp_submit").click().run()
+    assert any("current password is wrong" in e.value for e in app.error)
+
+
+def test_deleting_the_account_removes_the_user_and_logs_out(tmp_path, monkeypatch):
+    app = private_app(monkeypatch, tmp_path, page="account", user=create_user())
+    fill(app, da_password="Sup3rSecret1")
+    app.checkbox(key="da_sure").check()
+    app.button(key="da_submit").click().run()
+    assert not app.exception
+    assert "auth_user" not in app.session_state
+    with session_scope() as session:
+        from sqlalchemy import select
+        from anomaly_agent.db.models import User
+        assert session.scalar(select(User)) is None
+
+
+def test_the_account_page_does_not_exist_in_the_public_demo(tmp_path):
+    good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
+    app = run_app()
+    assert not any("Account" in str(link) for link in app.sidebar.markdown)

@@ -9,4 +9,7 @@ fpdf2
 scikit-learn
 plotly
 statsmodels
+sqlalchemy
+bcrypt
+psycopg[binary]
 pytest

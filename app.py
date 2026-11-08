@@ -25,6 +25,7 @@ pages = [
     st.Page("views/reports.py", title="Reports", icon=":material/description:"),
 ]
 if not public_demo:
+    pages.append(st.Page("views/assistant.py", title="AI assistant", icon=":material/smart_toy:"))
     pages.append(st.Page("views/alerts.py", title="Alerts", icon=":material/notifications:"))
     pages.append(st.Page("views/account.py", title="Account", icon=":material/person:"))
 navigation = st.navigation(pages)

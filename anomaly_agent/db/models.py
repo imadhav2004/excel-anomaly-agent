@@ -33,6 +33,7 @@ class User(Base):
     analyses: Mapped[list["Analysis"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     alert_rules: Mapped[list["AlertRule"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     alert_events: Mapped[list["AlertEvent"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    ai_calls: Mapped[list["AiCall"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
 class Analysis(Base):
@@ -97,3 +98,16 @@ class AlertEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     user: Mapped[User] = relationship(back_populates="alert_events")
+
+
+class AiCall(Base):
+    """One request the user made to Gemini. Counting these per hour gives the rate limit."""
+
+    __tablename__ = "ai_calls"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(10))  # "question" or "insight"
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+    user: Mapped[User] = relationship(back_populates="ai_calls")

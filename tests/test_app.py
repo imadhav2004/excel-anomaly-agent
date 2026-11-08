@@ -25,7 +25,9 @@ def quiet_environment(tmp_path, monkeypatch):
     st.cache_data.clear()  # a result cached by one test must not leak into the next
     monkeypatch.chdir(tmp_path)  # the app looks for data/sample_sales.xlsx in the current folder
     monkeypatch.setenv("PUBLIC_DEMO", "true")  # no AI call, no history file
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    # An empty value, not a deleted one: the app copies keys from .env / Streamlit secrets with setdefault,
+    # so a deleted key would come back on a computer that has a real key. An empty key stays "no key".
+    monkeypatch.setenv("GEMINI_API_KEY", "")
     (tmp_path / "data").mkdir()
     return tmp_path
 
@@ -523,3 +525,77 @@ def test_a_rule_can_be_switched_off_and_deleted(tmp_path, monkeypatch):
     assert [m for m in app.metric if m.label == "Rules checked"][0].value == "0"
     app.button(key=f"rule_delete_{rid}").click().run()
     assert not app.exception and not any(t.key.startswith("rule_active_") for t in app.toggle)
+
+
+# ---------- Phase 6b: AI assistant page ----------
+def assistant_app(monkeypatch, tmp_path, user=None, ai=False, reply="Sales rose 48.5% in Dec 2025."):
+    from anomaly_agent import insights
+    monkeypatch.setenv("PUBLIC_DEMO", "false")
+    if ai:
+        monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+        monkeypatch.setattr(insights, "ask_gemini_text", reply if callable(reply) else (lambda prompt: reply))
+    good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
+    return run_app("assistant", user=user or create_user())
+
+
+def ask(app, text):
+    app.chat_input[0].set_value(text).run()
+    return app
+
+
+def test_assistant_page_is_not_registered_in_the_public_demo(tmp_path):
+    app = run_app()
+    with pytest.raises(ValueError, match="Could not find a navigation page"):
+        app.switch_page("views/assistant.py")
+
+
+def test_without_ai_the_assistant_answers_from_the_numbers(tmp_path, monkeypatch):
+    app = assistant_app(monkeypatch, tmp_path)
+    assert not app.exception
+    assert any("AI is off" in i.value for i in app.info)
+    assert any("12 rows" in m.value for m in app.markdown)  # built-in summary is shown at once
+    ask(app, "What happened to Sales?")
+    assert not app.exception
+    assert any("Sales: latest 1,500" in m.value for m in app.markdown)
+    assert any("Built-in answer" in c.value for c in app.caption)
+
+
+def test_with_ai_the_answer_is_labelled_and_only_computed_facts_were_sent(tmp_path, monkeypatch):
+    sent = []
+    app = assistant_app(monkeypatch, tmp_path, ai=True, reply=lambda prompt: sent.append(prompt) or "Sales rose 48.5% in Dec 2025.")
+    assert any("AI is on" in i.value for i in app.info)
+    ask(app, "Why is Sales up?")
+    assert not app.exception
+    assert any("Sales rose 48.5%" in m.value for m in app.markdown)
+    assert any("Written by Gemini" in c.value for c in app.caption)
+    assert len(sent) == 1 and '"latest": 1500.0' in sent[0] and "Why is Sales up?" in sent[0]
+
+
+def test_a_failing_gemini_shows_the_builtin_answer_and_the_reason(tmp_path, monkeypatch):
+    def broken(prompt):
+        raise ValueError("boom")
+    app = assistant_app(monkeypatch, tmp_path, ai=True, reply=broken)
+    ask(app, "What about Sales?")
+    assert not app.exception
+    assert any("Sales: latest" in m.value for m in app.markdown)
+    assert any("Gemini could not answer: ValueError" in c.value for c in app.caption)
+
+
+def test_the_question_limit_stops_the_eleventh_ai_call(tmp_path, monkeypatch):
+    from anomaly_agent.db.ai_usage import LIMITS
+    calls = []
+    app = assistant_app(monkeypatch, tmp_path, ai=True, reply=lambda prompt: calls.append(1) or "ok")
+    for i in range(LIMITS["question"] + 1):
+        ask(app, f"question {i}")
+    assert not app.exception
+    assert len(calls) == LIMITS["question"]  # the 11th never reached Gemini
+    assert any("Limit reached" in c.value for c in app.caption)
+
+
+def test_the_summary_button_asks_ai_and_the_conversation_can_be_cleared(tmp_path, monkeypatch):
+    app = assistant_app(monkeypatch, tmp_path, ai=True, reply="- Sales is unusual.")
+    app.button(key="make_summary").click().run()
+    assert any("Sales is unusual" in m.value for m in app.markdown)
+    ask(app, "hello")
+    app.button(key="clear_chat").click().run()
+    assert not app.chat_message

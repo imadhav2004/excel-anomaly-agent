@@ -1,35 +1,19 @@
 """Database tests. They run on SQLite always, and also on PostgreSQL when you set TEST_POSTGRES_URL
 (an EMPTY test database: its tables are dropped before every test)."""
-import os
-
 import pytest
 from sqlalchemy import inspect
 
 from anomaly_agent.auth import register_user
 from anomaly_agent.db import database
-from anomaly_agent.db.analyses import delete_analysis, get_analysis, list_analyses, save_analysis
 from anomaly_agent.db.models import Base
+from anomaly_agent.db.analyses import delete_analysis, get_analysis, list_analyses, save_analysis
 
-POSTGRES = os.getenv("TEST_POSTGRES_URL")
 ANOMALIES = [
     {"metric": "Sales", "direction": "up", "latest": 1500.0, "previous": 1010.0,
      "pct_change": 0.485, "z_score": 5.1, "severity": "HIGH"},
     {"metric": "Refunds", "direction": "down", "latest": 40.0, "previous": 52.0,
      "pct_change": -0.23, "z_score": -2.2, "severity": "LOW"},
 ]
-
-
-@pytest.fixture(params=["sqlite", pytest.param("postgres", marks=pytest.mark.skipif(not POSTGRES, reason="TEST_POSTGRES_URL not set"))])
-def url(request, tmp_path):
-    if request.param == "sqlite":
-        yield f"sqlite:///{(tmp_path / 'db.sqlite').as_posix()}"
-        return
-    target = database.normalise_url(POSTGRES)
-    engine = database.get_engine(target)
-    Base.metadata.drop_all(engine)
-    Base.metadata.create_all(engine)
-    yield target
-    Base.metadata.drop_all(engine)
 
 
 def two_users(url):

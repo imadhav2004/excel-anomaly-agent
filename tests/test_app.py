@@ -164,9 +164,9 @@ def test_a_failed_ai_call_is_not_cached(tmp_path, monkeypatch):
 
 
 def scan_table(app):
-    # the scan table is the dataframe that has an "Agreement" column
+    # the scan table is the dataframe that has both "Period" and "Agreement" columns
     for element in app.dataframe:
-        if "Agreement" in element.value.columns:
+        if {"Period", "Agreement"} <= set(element.value.columns):
             return element.value
     return None
 
@@ -456,3 +456,70 @@ def test_the_account_page_does_not_exist_in_the_public_demo(tmp_path):
     good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
     app = run_app()
     assert not any("Account" in str(link) for link in app.sidebar.markdown)
+
+
+# ---------- Phase 6a: alerts page ----------
+def add_rule(app, name="Any high", **picks):
+    app.text_input(key="rule_name").set_value(name)
+    for key, value in picks.items():
+        app.selectbox(key=key).set_value(value)
+    app.button(key="rule_add").click().run()
+    return app
+
+
+def test_alerts_page_is_not_registered_in_the_public_demo(tmp_path):
+    app = run_app()
+    with pytest.raises(ValueError, match="Could not find a navigation page"):
+        app.switch_page("views/alerts.py")
+
+
+def test_a_rule_can_be_added_run_and_run_again_without_duplicates(tmp_path, monkeypatch):
+    app = private_app(monkeypatch, tmp_path, page="alerts", user=create_user())
+    assert not app.exception
+    add_rule(app, "Any high", rule_severity="LOW")
+    assert not app.exception and any("Any high" in m.value for m in app.markdown)
+    app.button(key="run_rules").click().run()
+    assert not app.exception
+    new = [m for m in app.metric if m.label == "New alerts"][0]
+    assert new.value == "1"  # only Sales jumped in the latest month
+    assert any("Sales" in str(d.value) for d in app.dataframe)
+    app.button(key="run_rules").click().run()
+    assert [m for m in app.metric if m.label == "New alerts"][0].value == "0"
+    assert [m for m in app.metric if m.label == "Already alerted before"][0].value == "1"
+
+
+def test_dry_run_shows_the_email_text_and_sends_nothing(tmp_path, monkeypatch):
+    monkeypatch.setenv("DRY_RUN", "true")
+    app = private_app(monkeypatch, tmp_path, page="alerts", user=create_user())
+    add_rule(app, "Any", rule_severity="LOW")
+    app.checkbox(key="alert_email").check()
+    app.button(key="run_rules").click().run()
+    assert any("Dry run" in i.value for i in app.info)
+    assert any("Hello Asha" in c.value for c in app.code)
+
+
+def test_alert_history_is_private_and_can_be_cleared(tmp_path, monkeypatch):
+    asha, ravi = create_user("asha@example.com", "Asha"), create_user("ravi@example.com", "Ravi")
+    app = private_app(monkeypatch, tmp_path, page="alerts", user=asha)
+    add_rule(app, "Any", rule_severity="LOW")
+    app.button(key="run_rules").click().run()
+    other = run_app("alerts", user=ravi)
+    assert not other.exception
+    assert not any("Any" == str(getattr(m, "value", "")) for m in other.markdown)
+    assert not any("Sales" in str(d.value) for d in other.dataframe)
+    app = run_app("alerts", user=asha)
+    assert any("Sales" in str(d.value) for d in app.dataframe)
+    app.button(key="clear_events").click().run()
+    assert not app.exception
+    assert not any("Sales" in str(d.value) for d in app.dataframe)
+
+
+def test_a_rule_can_be_switched_off_and_deleted(tmp_path, monkeypatch):
+    app = private_app(monkeypatch, tmp_path, page="alerts", user=create_user())
+    add_rule(app, "Temp", rule_severity="LOW")
+    rid = [t.key for t in app.toggle if t.key.startswith("rule_active_")][0].split("_")[-1]
+    app.toggle(key=f"rule_active_{rid}").set_value(False).run()
+    app.button(key="run_rules").click().run()
+    assert [m for m in app.metric if m.label == "Rules checked"][0].value == "0"
+    app.button(key=f"rule_delete_{rid}").click().run()
+    assert not app.exception and not any(t.key.startswith("rule_active_") for t in app.toggle)

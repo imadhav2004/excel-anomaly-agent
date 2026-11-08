@@ -7,7 +7,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-def send_email(subject, body):
+def send_email(subject, body, to=None):
+    """Send an e-mail. `to` is the recipient; without it the EMAIL_RECEIVER from .env is used."""
     dry_run = os.getenv("DRY_RUN", "true").lower() == "true"
 
     if dry_run:
@@ -19,7 +20,7 @@ def send_email(subject, body):
 
     sender = os.getenv("EMAIL_SENDER")
     password = os.getenv("EMAIL_PASSWORD")
-    receiver = os.getenv("EMAIL_RECEIVER")
+    receiver = to or os.getenv("EMAIL_RECEIVER")
     if not (sender and password and receiver):
         raise ValueError("Set EMAIL_SENDER, EMAIL_PASSWORD and EMAIL_RECEIVER in the .env file.")
 

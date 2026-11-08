@@ -16,7 +16,7 @@ from anomaly_agent.data.profiler import find_date_column, profile_data
 from anomaly_agent.data.reader import list_sheets, read_table
 from anomaly_agent.detection.base import DetectionSettings
 from anomaly_agent.detection.engine import METHODS, summarise
-from anomaly_agent.detector import detect_anomalies
+from anomaly_agent.latest import latest_anomalies
 from anomaly_agent.loader import prepare_dataframe
 from anomaly_agent.ui.analysis import cached_scan
 from anomaly_agent.ui.auth_ui import current_user
@@ -174,8 +174,6 @@ def build_context():
         st.stop()
 
     period = df[date_column].iloc[-1].strftime("%b %Y")
-    anomalies = detect_anomalies(df, date_column, pct_threshold, z_threshold)
-
     if chosen_methods:
         settings = DetectionSettings(
             pct_threshold=pct_threshold, z_threshold=z_threshold, iqr_multiplier=iqr_multiplier, window=window
@@ -183,6 +181,9 @@ def build_context():
         scan = cached_scan(df, date_column, tuple(chosen_metrics), tuple(chosen_methods), settings)
     else:
         scan = {"anomalies": [], "skipped": [], "ran": {}}
+
+    summary = summarise(scan)
+    anomalies = latest_anomalies(df, date_column, summary)  # same scan, so the same severity everywhere
 
     st.session_state[CONTEXT_KEY] = {
         "public_demo": public_demo,
@@ -202,5 +203,5 @@ def build_context():
         "period": period,
         "anomalies": anomalies,
         "scan": scan,
-        "summary": summarise(scan),
+        "summary": summary,
     }

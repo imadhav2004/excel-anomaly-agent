@@ -24,8 +24,13 @@ with latest_tab:
     c2.metric("Anomalies found", len(anomalies), border=True)
     c3.metric("HIGH severity", sum(1 for a in anomalies if a["severity"] == "HIGH"), border=True)
 
+    if not ctx["methods"]:
+        st.warning("No detection method is chosen, so nothing can be flagged. Choose methods in the sidebar (Advanced detection).")
     if anomalies:
-        st.dataframe(colour_severity(anomalies_to_rows(anomalies)), hide_index=True)
+        rows = anomalies_to_rows(anomalies)
+        for row, a in zip(rows, anomalies):
+            row["Agreement"] = f"{a['votes']} of {a['methods_run']} methods"
+        st.dataframe(colour_severity(rows), hide_index=True)
         st.subheader("Why it matters")
         if ai_notice:
             st.warning(ai_notice)

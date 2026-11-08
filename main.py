@@ -1,9 +1,9 @@
 import logging
 
 from anomaly_agent.ai_explainer import get_explanations
-from anomaly_agent.detector import detect_anomalies
 from anomaly_agent.emailer import send_email
 from anomaly_agent.history import filter_new_anomalies, mark_alerted, save_analysis
+from anomaly_agent.latest import latest_period_anomalies
 from anomaly_agent.loader import load_data
 from anomaly_agent.report import build_email
 from anomaly_agent.validator import DataError
@@ -21,7 +21,7 @@ def main():
         return
 
     period = df["Month"].iloc[-1].strftime("%b %Y")
-    anomalies = detect_anomalies(df)
+    anomalies = latest_period_anomalies(df, "Month")  # the same scan as the web page
     save_analysis(FILE_PATH, period, len(df), anomalies)
 
     if not anomalies:

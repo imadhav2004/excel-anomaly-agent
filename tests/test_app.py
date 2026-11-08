@@ -321,12 +321,25 @@ def test_data_quality_page_shows_counts_and_column_types(tmp_path):
     assert any("Column" in d.value.columns and "Type" in d.value.columns for d in app.dataframe)
 
 
-def test_reports_page_offers_the_three_downloads(tmp_path):
+def test_reports_page_prepares_the_report_files_on_request(tmp_path):
     good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
     app = run_app("reports")
     assert not app.exception
-    downloads = [e for e in app.get("download_button")]
-    assert len(downloads) == 3
+    assert len(app.get("download_button")) == 1  # only the cleaned data before anything is prepared
+    app.button(key="prepare_report").click().run()
+    assert not app.exception
+    assert len(app.get("download_button")) == 5  # PDF, Excel, scan CSV, forecast CSV, cleaned CSV
+    assert any("Ready" in s.value for s in app.success)
+
+
+def test_reports_must_be_prepared_again_after_the_options_change(tmp_path):
+    good_table().to_excel(tmp_path / "data" / "sample_sales.xlsx", index=False)
+    app = run_app("reports")
+    app.button(key="prepare_report").click().run()
+    app.selectbox(key="report_horizon").set_value(6).run()
+    assert not app.exception
+    assert len(app.get("download_button")) == 1
+    assert any("Prepare report files" in i.value for i in app.info)
 
 
 def test_history_is_shown_on_the_reports_page_when_not_public(tmp_path, monkeypatch):
